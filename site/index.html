@@ -1,0 +1,1111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>esptool</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="esptool is the open-source Python utility for talking to the ROM bootloader of Espressif chips: flash firmware, read memory, burn eFuses and sign images.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Instrument+Sans:wght@400..700&family=Martian+Mono:wght@300..600&display=swap">
+<style>
+/* Layout: a circuit board you scroll down. Solder-mask ground, copper accents,
+   silkscreen type. Hero = live serial session over animated traces; then
+   chip picker -> command deck -> flash map, all wired to one selected chip. */
+:root {
+  --mask: #0a171b;
+  --mask-2: #0f2227;
+  --mask-3: #143038;
+  --trace: #1f3d44;
+  --silk: #e7eee9;
+  --silk-dim: #8ea5a2;
+  --copper: #e8945c;
+  --copper-hi: #ffc996;
+  --copper-ink: #1a0d05;
+  --ok: #86d99a;
+  --info: #7cc7d6;
+  --term-bg: #071114;
+  --term-fg: #cfe0db;
+  --term-dim: #5f7a77;
+  --glass: rgba(10, 23, 27, .72);
+  --shadow: 0 30px 80px -30px rgba(0, 0, 0, .7);
+  --f-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Instrument Sans", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "Martian Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --r: 14px;
+  --gutter: max(16px, env(safe-area-inset-left, 0px));
+  --gutter-r: max(16px, env(safe-area-inset-right, 0px));
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --mask: #eef3f0; --mask-2: #ffffff; --mask-3: #e3ebe7; --trace: #c9d7d2;
+    --silk: #0f2329; --silk-dim: #4b6461; --copper: #b65a20; --copper-hi: #8c4014;
+    --copper-ink: #fff7f0; --ok: #237a3b; --info: #1f6f80;
+    --glass: rgba(238, 243, 240, .78); --shadow: 0 30px 70px -35px rgba(15, 35, 41, .35);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --mask: #eef3f0; --mask-2: #ffffff; --mask-3: #e3ebe7; --trace: #c9d7d2;
+  --silk: #0f2329; --silk-dim: #4b6461; --copper: #b65a20; --copper-hi: #8c4014;
+  --copper-ink: #fff7f0; --ok: #237a3b; --info: #1f6f80;
+  --glass: rgba(238, 243, 240, .78); --shadow: 0 30px 70px -35px rgba(15, 35, 41, .35);
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+body {
+  margin: 0;
+  background: var(--mask);
+  color: var(--silk);
+  font: 400 1rem/1.6 var(--f-body);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 60; background: var(--mask);
+}
+a { color: inherit; }
+img, canvas, svg { max-width: 100%; }
+code, kbd, pre { font-family: var(--f-mono); }
+:focus-visible { outline: 2px solid var(--copper); outline-offset: 3px; border-radius: 6px; }
+::selection { background: var(--copper); color: var(--copper-ink); }
+
+.wrap {
+  width: 100%; max-width: 1180px; margin-inline: auto;
+  padding-left: var(--gutter); padding-right: var(--gutter-r);
+}
+.eyebrow {
+  font: 500 .72rem/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--copper); display: inline-flex; align-items: center; gap: .6em;
+}
+.eyebrow::before { content: ""; width: 22px; height: 1px; background: currentColor; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; letter-spacing: -.02em; }
+h2 { font-size: clamp(2rem, 4.4vw, 3.4rem); line-height: 1.02; font-weight: 700; }
+.lede { color: var(--silk-dim); font-size: 1.08rem; max-width: 60ch; margin: 0; }
+
+/* ---------- nav ---------- */
+.nav {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 50;
+  background: var(--glass); backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border-bottom: 1px solid color-mix(in srgb, var(--trace) 70%, transparent);
+}
+.nav .wrap { display: flex; align-items: center; gap: 24px; height: 62px; }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 600 1rem var(--f-mono); }
+.brand-mark {
+  width: 26px; height: 26px; border-radius: 6px; position: relative;
+  background: var(--copper);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--copper) 25%, transparent), 0 0 24px -4px var(--copper);
+}
+.brand-mark::after {
+  content: ""; position: absolute; inset: 7px; border-radius: 2px; background: var(--mask);
+}
+.nav-links { display: flex; gap: 4px; margin-left: auto; }
+.nav-links a {
+  text-decoration: none; font-size: .9rem; color: var(--silk-dim);
+  padding: 8px 12px; border-radius: 999px; transition: color .2s, background .2s;
+}
+.nav-links a:hover { color: var(--silk); background: var(--mask-3); }
+.theme-btn {
+  width: 38px; height: 38px; border-radius: 999px; border: 1px solid var(--trace);
+  background: transparent; color: var(--silk); cursor: pointer; display: grid; place-items: center;
+}
+.theme-btn svg { width: 18px; height: 18px; }
+.nav-progress {
+  position: absolute; left: 0; bottom: -1px; height: 2px; width: 100%;
+  background: linear-gradient(90deg, var(--copper), var(--copper-hi));
+  transform-origin: 0 50%; transform: scaleX(0);
+}
+@supports (animation-timeline: scroll()) {
+  .nav-progress { animation: grow linear both; animation-timeline: scroll(root); }
+  @keyframes grow { to { transform: scaleX(1); } }
+}
+@media (max-width: 760px) { .nav-links { display: none; } .theme-btn { margin-left: auto; } }
+
+/* ---------- hero ---------- */
+.hero { position: relative; isolation: isolate; overflow: hidden; }
+#board { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; }
+.hero::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 20% 30%, transparent 0, var(--mask) 85%),
+    linear-gradient(to bottom, transparent 70%, var(--mask));
+  opacity: .9;
+}
+.hero .wrap {
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: clamp(32px, 5vw, 64px); align-items: center;
+  padding-block: clamp(56px, 9vw, 112px) clamp(48px, 7vw, 88px);
+}
+.hero h1 {
+  font-size: clamp(2.9rem, 7.4vw, 6rem); line-height: .92; font-weight: 800;
+  letter-spacing: -.045em; margin-block: 18px 22px;
+}
+.hero h1 .glow {
+  background: linear-gradient(100deg, var(--copper) 10%, var(--copper-hi) 50%, var(--copper) 90%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: sheen 6s ease-in-out infinite;
+}
+@keyframes sheen { 50% { background-position: 100% 0; } }
+.hero h1 .word { display: inline-block; animation: rise-in .9s cubic-bezier(.2, .8, .2, 1) both; }
+.hero h1 .word:nth-child(2) { animation-delay: .08s; }
+.hero h1 .word:nth-child(3) { animation-delay: .16s; }
+.hero h1 .word:nth-child(4) { animation-delay: .24s; }
+@keyframes rise-in { from { transform: translateY(.35em); opacity: .15; filter: blur(6px); } }
+
+.install {
+  margin-top: 30px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+}
+.cmd-pill {
+  display: inline-flex; align-items: center; gap: 12px; min-width: 0;
+  background: var(--mask-2); border: 1px solid var(--trace); border-radius: 999px;
+  padding: 6px 6px 6px 18px; font: 500 .9rem var(--f-mono);
+}
+.cmd-pill .p { color: var(--copper); user-select: none; }
+.btn {
+  --bg: var(--copper); --fg: var(--copper-ink);
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  border: 0; border-radius: 999px; padding: 11px 20px;
+  background: var(--bg); color: var(--fg); text-decoration: none;
+  font: 600 .92rem var(--f-body); transition: transform .2s, box-shadow .2s, background .2s;
+  will-change: transform;
+}
+.btn:hover { box-shadow: 0 10px 30px -10px var(--copper); }
+.btn:active { transform: scale(.97); }
+.btn.ghost { --bg: transparent; --fg: var(--silk); border: 1px solid var(--trace); }
+.btn.ghost:hover { border-color: var(--copper); box-shadow: none; }
+.btn.small { padding: 8px 14px; font-size: .82rem; }
+.btn svg { width: 16px; height: 16px; }
+
+/* terminal */
+.term {
+  background: var(--term-bg); color: var(--term-fg); border-radius: var(--r);
+  border: 1px solid color-mix(in srgb, var(--copper) 18%, #1d343a);
+  box-shadow: var(--shadow), 0 0 0 1px rgba(255, 255, 255, .02) inset;
+  overflow: hidden; min-width: 0; position: relative;
+}
+.term-bar {
+  display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+  border-bottom: 1px solid #13282d; font: 400 .72rem var(--f-mono); color: var(--term-dim);
+}
+.term-bar i { width: 10px; height: 10px; border-radius: 50%; background: #23393e; }
+.term-bar i:first-child { background: #e8945c; }
+.term-bar span { margin-left: auto; }
+.led { width: 7px; height: 7px; border-radius: 50%; background: #86d99a; box-shadow: 0 0 10px #86d99a; animation: blink 1.2s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.term pre {
+  margin: 0; padding: 18px 20px 22px; font-size: .74rem; line-height: 1.75;
+  overflow-x: auto; white-space: pre; min-height: 22.5em;
+}
+.term .c-cmd { color: #ffffff; }
+.term .c-p { color: #e8945c; }
+.term .c-dim { color: var(--term-dim); }
+.term .c-ok { color: #86d99a; }
+.term .c-addr { color: #ffc996; }
+.term .c-info { color: #7cc7d6; }
+.caret { display: inline-block; width: .6em; height: 1.1em; vertical-align: -.2em; background: #e8945c; animation: blink 1s steps(2) infinite; }
+
+.hero-term { transform: perspective(1400px) rotateY(-6deg) rotateX(3deg); transition: transform .6s cubic-bezier(.2, .8, .2, 1); }
+.hero-term:hover { transform: none; }
+
+/* stats */
+.stats {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-block: 1px solid var(--trace); background: color-mix(in srgb, var(--mask-2) 60%, transparent);
+}
+.stat { padding: 26px 22px; border-left: 1px solid var(--trace); }
+.stat:first-child { border-left: 0; }
+.stat b {
+  display: block; font: 700 clamp(1.9rem, 3.6vw, 2.7rem)/1 var(--f-display);
+  letter-spacing: -.03em; font-variant-numeric: tabular-nums;
+}
+.stat span { font: 400 .72rem/1.4 var(--f-mono); color: var(--silk-dim); text-transform: uppercase; letter-spacing: .1em; }
+@media (max-width: 760px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat:nth-child(3) { border-left: 0; }
+  .stat:nth-child(n+3) { border-top: 1px solid var(--trace); }
+}
+
+/* marquee */
+.marquee {
+  overflow: hidden; border-bottom: 1px solid var(--trace); padding-block: 14px;
+  mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+}
+.marquee-track { display: flex; gap: 48px; width: max-content; animation: slide 40s linear infinite; }
+.marquee:hover .marquee-track { animation-play-state: paused; }
+.marquee span { font: 400 .78rem var(--f-mono); color: var(--silk-dim); white-space: nowrap; }
+.marquee span b { color: var(--copper); font-weight: 500; }
+@keyframes slide { to { transform: translateX(-50%); } }
+
+/* ---------- sections ---------- */
+section.block { padding-block: clamp(72px, 10vw, 128px); }
+.head { display: grid; gap: 18px; margin-bottom: clamp(32px, 5vw, 56px); }
+
+/* chip explorer */
+.explorer { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.chips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.chip-card {
+  --mx: 50%; --my: 50%;
+  position: relative; text-align: left; cursor: pointer; overflow: hidden;
+  background: var(--mask-2); border: 1px solid var(--trace); border-radius: var(--r);
+  padding: 18px 16px 16px; color: var(--silk); font: inherit;
+  display: grid; gap: 14px; transition: border-color .25s, transform .25s;
+}
+.chip-card::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .3s;
+  background: radial-gradient(220px circle at var(--mx) var(--my), color-mix(in srgb, var(--copper) 22%, transparent), transparent 70%);
+}
+.chip-card:hover::before, .chip-card[aria-pressed="true"]::before { opacity: 1; }
+.chip-card:hover { transform: translateY(-3px); }
+.chip-card[aria-pressed="true"] { border-color: var(--copper); }
+.pkg {
+  width: 46px; height: 46px; border-radius: 6px; position: relative;
+  background: var(--mask-3); border: 1px solid var(--trace);
+  box-shadow: 0 0 0 4px var(--mask-2), 0 0 0 5px transparent;
+}
+.pkg::before, .pkg::after {
+  content: ""; position: absolute; background: repeating-linear-gradient(90deg, var(--silk-dim) 0 3px, transparent 3px 7px);
+  opacity: .5; height: 4px; left: 6px; right: 6px;
+}
+.pkg::before { top: -6px; } .pkg::after { bottom: -6px; }
+.pkg i { position: absolute; width: 5px; height: 5px; border-radius: 50%; left: 6px; top: 6px; background: var(--silk-dim); opacity: .6; }
+.chip-card[aria-pressed="true"] .pkg { background: color-mix(in srgb, var(--copper) 20%, var(--mask-3)); border-color: var(--copper); }
+.chip-card[aria-pressed="true"] .pkg i { background: var(--copper); opacity: 1; box-shadow: 0 0 8px var(--copper); }
+.chip-card strong { font: 600 1.05rem var(--f-display); letter-spacing: -.01em; display: block; }
+.chip-card small { font: 400 .68rem var(--f-mono); color: var(--silk-dim); letter-spacing: .04em; }
+.arch { position: absolute; top: 14px; right: 14px; font: 500 .62rem var(--f-mono); padding: 3px 7px; border-radius: 999px; border: 1px solid var(--trace); color: var(--silk-dim); }
+.arch.risc { color: var(--info); border-color: color-mix(in srgb, var(--info) 40%, transparent); }
+
+.detail {
+  position: sticky; top: 90px; background: var(--mask-2); border: 1px solid var(--trace);
+  border-radius: calc(var(--r) + 4px); padding: 26px; display: grid; gap: 20px; min-width: 0;
+  box-shadow: var(--shadow);
+}
+.detail h3 { font-size: clamp(2.2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -.04em; line-height: 1; }
+.detail .tagline { color: var(--silk-dim); margin: 0; min-height: 3.2em; }
+.specs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--trace); border: 1px solid var(--trace); border-radius: 10px; overflow: hidden; }
+.specs div { background: var(--mask-2); padding: 12px 14px; display: grid; gap: 2px; }
+.specs dt { font: 400 .64rem var(--f-mono); color: var(--silk-dim); text-transform: uppercase; letter-spacing: .1em; }
+.specs dd { margin: 0; font: 600 .95rem var(--f-body); font-variant-numeric: tabular-nums; }
+.radios { display: flex; flex-wrap: wrap; gap: 8px; }
+.radio {
+  font: 500 .72rem var(--f-mono); padding: 6px 10px; border-radius: 999px;
+  border: 1px solid var(--trace); color: var(--silk-dim);
+}
+.radio.on { color: var(--copper); border-color: color-mix(in srgb, var(--copper) 55%, transparent); background: color-mix(in srgb, var(--copper) 10%, transparent); }
+.radio.on::before { content: "● "; }
+.flag { font: 500 .8rem var(--f-mono); background: var(--mask); border: 1px dashed var(--trace); padding: 10px 12px; border-radius: 8px; overflow-x: auto; white-space: nowrap; }
+.flag em { color: var(--copper); font-style: normal; }
+.swap { animation: swap .45s cubic-bezier(.2, .8, .2, 1); }
+@keyframes swap { from { opacity: .2; transform: translateY(8px); } }
+
+@media (max-width: 900px) {
+  .explorer { grid-template-columns: minmax(0, 1fr); }
+  .detail { position: relative; top: 0; }
+}
+@media (max-width: 520px) { .chips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* command deck */
+.deck { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 28px; align-items: stretch; }
+.controls { display: grid; gap: 22px; align-content: start; }
+.control-label { font: 500 .68rem var(--f-mono); color: var(--silk-dim); text-transform: uppercase; letter-spacing: .12em; margin-bottom: 10px; display: block; }
+.tasks { display: flex; flex-wrap: wrap; gap: 8px; }
+.task {
+  cursor: pointer; border: 1px solid var(--trace); background: var(--mask-2); color: var(--silk);
+  font: 500 .9rem var(--f-body); padding: 10px 16px; border-radius: 999px;
+  transition: background .2s, border-color .2s, color .2s, transform .2s;
+}
+.task:hover { border-color: var(--copper); transform: translateY(-1px); }
+.task[aria-pressed="true"] { background: var(--copper); border-color: var(--copper); color: var(--copper-ink); }
+.selects { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field label { font: 500 .64rem var(--f-mono); color: var(--silk-dim); text-transform: uppercase; letter-spacing: .1em; }
+.field select {
+  appearance: none; -webkit-appearance: none; width: 100%;
+  background: var(--mask-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23e8945c' fill='none' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 12px center;
+  border: 1px solid var(--trace); color: var(--silk); border-radius: 10px;
+  padding: 10px 30px 10px 12px; font: 500 .8rem var(--f-mono); cursor: pointer;
+}
+.task-note { color: var(--silk-dim); font-size: .95rem; margin: 0; min-height: 3em; }
+@media (max-width: 520px) { .selects { grid-template-columns: minmax(0, 1fr); } }
+
+.console { display: grid; grid-template-rows: auto auto 1fr; }
+.console .cmdline {
+  padding: 16px 20px; border-bottom: 1px solid #13282d; display: flex; gap: 12px; align-items: flex-start;
+}
+.console .cmdline code { font-size: .78rem; line-height: 1.7; flex: 1; min-width: 0; overflow-wrap: anywhere; color: #fff; }
+.console .cmdline code .k { color: #e8945c; }
+.console .cmdline code .a { color: #ffc996; }
+.console .cmdline code .o { color: #7cc7d6; }
+.icon-btn {
+  flex: none; border: 1px solid #23393e; background: #0d1c20; color: #cfe0db; border-radius: 8px;
+  font: 500 .7rem var(--f-mono); padding: 6px 10px; cursor: pointer; transition: border-color .2s, color .2s;
+}
+.icon-btn:hover { border-color: #e8945c; color: #ffc996; }
+.stages { display: flex; gap: 0; padding: 14px 20px; border-bottom: 1px solid #13282d; overflow-x: auto; }
+.stage {
+  flex: 1; min-width: 64px; display: grid; gap: 6px; font: 400 .62rem var(--f-mono); color: var(--term-dim);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.stage::before { content: ""; height: 3px; border-radius: 3px; background: #1a2f34; margin-right: 6px; transition: background .3s, box-shadow .3s; }
+.stage.active { color: #ffc996; }
+.stage.active::before { background: #e8945c; box-shadow: 0 0 12px #e8945c; }
+.stage.done { color: #86d99a; }
+.stage.done::before { background: #86d99a; }
+.console pre { min-height: 15em; max-height: 22em; overflow: auto; }
+
+/* flash map */
+.map-shell { background: var(--mask-2); border: 1px solid var(--trace); border-radius: calc(var(--r) + 4px); padding: clamp(18px, 3vw, 30px); display: grid; gap: 22px; }
+.map-top { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+.map-readout { font: 500 .8rem var(--f-mono); color: var(--silk-dim); font-variant-numeric: tabular-nums; }
+.map-readout b { color: var(--copper); font-weight: 600; }
+.map-scroll { overflow-x: auto; padding-bottom: 4px; }
+.map { display: flex; height: 96px; min-width: 640px; border-radius: 10px; overflow: hidden; border: 1px solid var(--trace); position: relative; }
+.seg {
+  position: relative; border: 0; border-right: 1px solid var(--trace); cursor: pointer; padding: 10px;
+  background: var(--mask); color: var(--silk); text-align: left; font: inherit;
+  display: flex; flex-direction: column; justify-content: space-between; min-width: 0; overflow: hidden;
+  transition: background .25s;
+}
+.seg:last-child { border-right: 0; }
+.seg span { font: 600 .74rem var(--f-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seg small { font: 400 .6rem var(--f-mono); color: var(--silk-dim); white-space: nowrap; }
+.seg::after {
+  content: ""; position: absolute; inset: 0; transform-origin: 0 50%; transform: scaleX(var(--fill, 0));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--copper) 40%, transparent), color-mix(in srgb, var(--copper) 70%, transparent));
+  mix-blend-mode: normal; z-index: 0; pointer-events: none;
+}
+.seg > * { position: relative; z-index: 1; }
+.seg.reserved { background: repeating-linear-gradient(135deg, var(--mask) 0 6px, var(--mask-3) 6px 12px); }
+.seg.free { background: var(--mask); }
+.seg.free span { color: var(--silk-dim); font-weight: 400; }
+.seg:hover, .seg:focus-visible, .seg.sel { background: var(--mask-3); }
+.seg.sel { box-shadow: inset 0 -3px 0 var(--copper); }
+.map-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.seg-info { display: grid; gap: 6px; padding: 14px 16px; border: 1px solid var(--trace); border-radius: 10px; min-width: 0; }
+.seg-info dt { font: 400 .64rem var(--f-mono); color: var(--silk-dim); text-transform: uppercase; letter-spacing: .1em; }
+.seg-info dd { margin: 0; font: 500 .9rem var(--f-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.seg-desc { grid-column: 1 / -1; color: var(--silk-dim); margin: 0; }
+
+/* tools */
+.tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.tool {
+  border: 1px solid var(--trace); border-radius: calc(var(--r) + 4px); padding: 26px; display: grid; gap: 16px;
+  align-content: start; position: relative; overflow: hidden; background: var(--mask);
+  transition: transform .35s cubic-bezier(.2, .8, .2, 1), border-color .3s;
+}
+.tool:hover { transform: translateY(-6px); border-color: var(--copper); }
+.tool .num { font: 400 .7rem var(--f-mono); color: var(--silk-dim); }
+.tool h3 { font-size: 1.7rem; font-family: var(--f-mono); font-weight: 600; letter-spacing: -.04em; }
+.tool p { margin: 0; color: var(--silk-dim); }
+.tool code { font-size: .74rem; background: var(--mask-2); border: 1px solid var(--trace); padding: 10px 12px; border-radius: 8px; overflow-x: auto; white-space: nowrap; display: block; }
+.tool .warn { font: 500 .7rem var(--f-mono); color: var(--copper); }
+.tool-art { height: 60px; position: relative; }
+.tool-art svg { width: 100%; height: 60px; }
+.tool-art path { stroke: var(--trace); stroke-width: 2; fill: none; }
+.tool-art .run { stroke: var(--copper); stroke-dasharray: 28 400; stroke-dashoffset: 428; transition: stroke-dashoffset 1.4s cubic-bezier(.4, 0, .2, 1); }
+.tool:hover .tool-art .run { stroke-dashoffset: 0; }
+.tool-art circle { fill: var(--mask-2); stroke: var(--copper); stroke-width: 2; }
+@media (max-width: 900px) { .tools { grid-template-columns: minmax(0, 1fr); } }
+
+/* install */
+.install-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: center; }
+.tabs { display: flex; gap: 4px; padding: 4px; background: var(--mask-2); border: 1px solid var(--trace); border-radius: 999px; width: fit-content; }
+.tab { border: 0; background: transparent; color: var(--silk-dim); font: 500 .82rem var(--f-mono); padding: 8px 16px; border-radius: 999px; cursor: pointer; transition: background .2s, color .2s; }
+.tab[aria-selected="true"] { background: var(--copper); color: var(--copper-ink); }
+.install-term pre { min-height: 9em; }
+.checklist { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; }
+.checklist li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; color: var(--silk-dim); }
+.checklist li b { color: var(--silk); font-weight: 600; }
+.checklist li::before {
+  content: ""; width: 22px; height: 22px; border-radius: 6px; margin-top: 2px;
+  border: 1px solid color-mix(in srgb, var(--copper) 60%, transparent);
+  background: color-mix(in srgb, var(--copper) 12%, transparent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='10'%3E%3Cpath d='M1 5l3.5 3.5L11 1.5' stroke='%23e8945c' fill='none' stroke-width='1.8'/%3E%3C/svg%3E") no-repeat center;
+}
+@media (max-width: 900px) { .install-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* footer */
+footer { border-top: 1px solid var(--trace); padding-block: 48px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 24px 48px; justify-content: space-between; align-items: flex-start; }
+footer p { margin: 0; color: var(--silk-dim); max-width: 52ch; font-size: .92rem; }
+.foot-links { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.foot-links a { color: var(--silk-dim); text-decoration: none; font-size: .92rem; }
+.foot-links a:hover { color: var(--copper); }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); z-index: 80;
+  transform: translate(-50%, 140%); background: var(--silk); color: var(--mask);
+  font: 500 .85rem var(--f-mono); padding: 10px 16px; border-radius: 999px;
+  transition: transform .4s cubic-bezier(.2, .8, .2, 1), visibility .4s; pointer-events: none; visibility: hidden;
+}
+.toast.show { transform: translate(-50%, 0); visibility: visible; }
+
+/* scroll-driven reveals: content always rests visible; only the entrance animates */
+@supports (animation-timeline: view()) {
+  .reveal { animation: reveal linear both; animation-timeline: view(); animation-range: entry 0% entry 80%; }
+  @keyframes reveal { from { opacity: .15; transform: translateY(40px) scale(.98); } }
+}
+
+@media (max-width: 900px) {
+  .hero .wrap { grid-template-columns: minmax(0, 1fr); }
+  .hero-term { transform: none; }
+  .deck { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"></span>esptool</a>
+    <div class="nav-links">
+      <a href="#chips">Chips</a>
+      <a href="#deck">Command deck</a>
+      <a href="#map">Flash map</a>
+      <a href="#tools">Toolkit</a>
+      <a href="#install">Install</a>
+    </div>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle light and dark theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+    </button>
+  </div>
+  <div class="nav-progress" aria-hidden="true"></div>
+</nav>
+
+<header class="hero" id="top">
+  <canvas id="board" aria-hidden="true"></canvas>
+  <div class="wrap">
+    <div>
+      <span class="eyebrow">Serial bootloader utility · v4.7</span>
+      <h1><span class="word">Talk</span> <span class="word">straight</span> <span class="word">to the</span> <span class="word glow">silicon.</span></h1>
+      <p class="lede">esptool is the open-source Python utility that speaks the ROM bootloader protocol of every Espressif chip. Flash firmware, read memory, burn eFuses and sign images over one USB cable, with no IDE in the way.</p>
+      <div class="install">
+        <div class="cmd-pill"><span class="p">$</span><span id="heroCmd">pip install esptool</span>
+          <button class="btn small" type="button" data-copy="pip install esptool">Copy</button>
+        </div>
+        <a class="btn ghost" href="#deck">Build a command
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+    </div>
+
+    <div class="term hero-term" role="img" aria-label="Example esptool session flashing an ESP32">
+      <div class="term-bar"><i></i><i></i><i></i><span>/dev/ttyUSB0 · 460800 baud</span><span class="led" aria-hidden="true"></span></div>
+<pre id="heroTerm"><span class="c-p">$</span> <span class="c-cmd">esptool.py --chip esp32 write_flash 0x1000 bootloader.bin</span>
+esptool.py v4.7-dev
+Serial port /dev/ttyUSB0
+Connecting....
+Chip is <span class="c-info">ESP32-D0WD-V3 (revision v3.0)</span>
+Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse
+Crystal is 40MHz
+MAC: <span class="c-addr">24:0a:c4:5e:91:3c</span>
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to <span class="c-addr">460800</span>
+Changed.
+Flash will be erased from <span class="c-addr">0x00001000</span> to <span class="c-addr">0x00007fff</span>...
+Compressed 26640 bytes to 16691...
+Writing at <span class="c-addr">0x00001000</span>... (100 %)
+Wrote 26640 bytes at 0x00001000 in 0.6 seconds (357.2 kbit/s)
+<span class="c-ok">Hash of data verified.</span>
+<span class="c-dim">Hard resetting via RTS pin...</span></pre>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b data-count="9">9</b><span>Chip families</span></div>
+    <div class="stat"><b data-count="21">21</b><span>esptool commands</span></div>
+    <div class="stat"><b data-count="3">3</b><span>Tools in one install</span></div>
+    <div class="stat"><b>115200</b><span>Default ROM baud</span></div>
+  </div>
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track" id="marquee"></div>
+  </div>
+</header>
+
+<main>
+  <!-- chips -->
+  <section class="block" id="chips">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Pick your silicon</span>
+        <h2>Nine families. One <code style="font-size:.8em;color:var(--copper)">--chip</code> flag.</h2>
+        <p class="lede">Choose a chip and the rest of this page rewires itself: the command deck and the flash map below both follow your pick.</p>
+      </div>
+      <div class="explorer">
+        <div class="chips reveal" id="chipGrid" role="group" aria-label="Espressif chips"></div>
+        <aside class="detail reveal" id="detail" aria-live="polite"></aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- deck -->
+  <section class="block" id="deck" style="background:var(--mask-2);border-block:1px solid var(--trace)">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Command deck</span>
+        <h2>Say what you want. Get the exact incantation.</h2>
+        <p class="lede">Pick a job, a port and a baud rate. Copy the command, or press Run to watch what happens on the wire.</p>
+      </div>
+      <div class="deck">
+        <div class="controls reveal">
+          <div>
+            <span class="control-label">Job</span>
+            <div class="tasks" id="tasks" role="group" aria-label="Job"></div>
+          </div>
+          <div class="selects">
+            <div class="field"><label for="selChip">Chip</label><select id="selChip"></select></div>
+            <div class="field"><label for="selPort">Port</label>
+              <select id="selPort">
+                <option>/dev/ttyUSB0</option>
+                <option>/dev/ttyACM0</option>
+                <option>/dev/cu.usbserial-0001</option>
+                <option>COM3</option>
+              </select></div>
+            <div class="field"><label for="selBaud">Baud</label>
+              <select id="selBaud">
+                <option>115200</option>
+                <option selected>460800</option>
+                <option>921600</option>
+                <option>2000000</option>
+              </select></div>
+          </div>
+          <p class="task-note" id="taskNote"></p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn" type="button" id="runBtn">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Run simulation</button>
+            <button class="btn ghost" type="button" id="copyCmd">Copy command</button>
+          </div>
+        </div>
+        <div class="term console reveal">
+          <div class="cmdline"><code id="cmdOut"></code><button class="icon-btn" type="button" id="copyCmd2">copy</button></div>
+          <div class="stages" id="stages"></div>
+          <pre id="consoleOut"><span class="c-dim">Press Run to simulate this command against a virtual board.</span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- map -->
+  <section class="block" id="map">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Flash map</span>
+        <h2>Where every byte lands.</h2>
+        <p class="lede">The default ESP-IDF layout on 4 MB of SPI flash, drawn for your chip. Tap a region to inspect it, then flash the whole thing.</p>
+      </div>
+      <div class="map-shell reveal">
+        <div class="map-top">
+          <div class="map-readout" id="mapReadout">Chip <b id="mapChip">ESP32</b> · bootloader at <b id="mapBoot">0x1000</b></div>
+          <button class="btn small" type="button" id="flashBtn">Flash all regions</button>
+        </div>
+        <div class="map-scroll"><div class="map" id="flashMap"></div></div>
+        <dl class="map-legend" id="segInfo"></dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- tools -->
+  <section class="block" id="tools" style="background:var(--mask-2);border-block:1px solid var(--trace)">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">The toolkit</span>
+        <h2>Three tools ship in one <code style="font-size:.8em;color:var(--copper)">pip install</code>.</h2>
+      </div>
+      <div class="tools">
+        <article class="tool reveal">
+          <div class="tool-art" aria-hidden="true"><svg viewBox="0 0 300 60" preserveAspectRatio="none"><path d="M0 30h80l20-20h100l20 20h80"/><path class="run" d="M0 30h80l20-20h100l20 20h80"/><circle cx="80" cy="30" r="5"/><circle cx="220" cy="30" r="5"/></svg></div>
+          <span class="num">esptool.py</span>
+          <h3>esptool</h3>
+          <p>Flash, read, verify and erase. Convert ELF files into bootable images, merge binaries and query chip IDs, MAC addresses and flash parameters.</p>
+          <code>esptool.py write_flash 0x0 app.bin</code>
+        </article>
+        <article class="tool reveal">
+          <div class="tool-art" aria-hidden="true"><svg viewBox="0 0 300 60" preserveAspectRatio="none"><path d="M0 45h60l30-30h60l30 30h120"/><path class="run" d="M0 45h60l30-30h60l30 30h120"/><circle cx="150" cy="15" r="5"/><circle cx="60" cy="45" r="5"/></svg></div>
+          <span class="num">espefuse.py</span>
+          <h3>espefuse</h3>
+          <p>Read and burn the one-time-programmable eFuses that hold MAC addresses, flash voltage, keys and security configuration.</p>
+          <code>espefuse.py --port /dev/ttyUSB0 summary</code>
+          <span class="warn">eFuses only go one way. Measure twice.</span>
+        </article>
+        <article class="tool reveal">
+          <div class="tool-art" aria-hidden="true"><svg viewBox="0 0 300 60" preserveAspectRatio="none"><path d="M0 20h120l20 20h40l20-20h100"/><path class="run" d="M0 20h120l20 20h40l20-20h100"/><circle cx="140" cy="40" r="5"/><circle cx="200" cy="20" r="5"/></svg></div>
+          <span class="num">espsecure.py</span>
+          <h3>espsecure</h3>
+          <p>Generate signing keys, sign images for Secure Boot and encrypt or decrypt data for Flash Encryption, all offline on your machine.</p>
+          <code>espsecure.py sign_data --version 2 --keyfile key.pem app.bin</code>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- install -->
+  <section class="block" id="install">
+    <div class="wrap install-grid">
+      <div class="head reveal" style="margin:0">
+        <span class="eyebrow">Get started</span>
+        <h2>Ten seconds to your first flash.</h2>
+        <ul class="checklist">
+          <li><span><b>Python 3.7 or newer</b> on Linux, macOS or Windows.</span></li>
+          <li><span><b>A USB cable</b> that carries data, not just power. More boards are lost to charge-only cables than to bad firmware.</span></li>
+          <li><span><b>Serial port access.</b> On Linux, add yourself to the <code>dialout</code> group.</span></li>
+          <li><span><b>Stuck at "Connecting..."?</b> Hold BOOT, tap RESET, and try again.</span></li>
+        </ul>
+      </div>
+      <div class="reveal" style="display:grid;gap:14px;min-width:0">
+        <div class="tabs" role="tablist" aria-label="Install method">
+          <button class="tab" role="tab" aria-selected="true" data-tab="pip" id="tab-pip">pip</button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="pipx" id="tab-pipx">pipx</button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="src" id="tab-src">source</button>
+        </div>
+        <div class="term install-term">
+          <div class="term-bar"><i></i><i></i><i></i><span>~/projects</span><button class="icon-btn" type="button" id="copyInstall" style="margin-left:12px">copy</button></div>
+          <pre id="installOut"></pre>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <a class="btn" href="https://docs.espressif.com/projects/esptool/" target="_blank" rel="noopener">Read the docs</a>
+          <a class="btn ghost" href="https://github.com/espressif/esptool" target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div style="display:grid;gap:12px">
+      <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"></span>esptool</a>
+      <p>Created by Fredrik Ahlberg, later maintained by Angus Gratton, now supported by Espressif Systems with help from many community contributors. Free software under GPLv2 or later.</p>
+    </div>
+    <div class="foot-links">
+      <a href="https://docs.espressif.com/projects/esptool/" target="_blank" rel="noopener">Documentation</a>
+      <a href="https://docs.espressif.com/projects/esptool/en/latest/troubleshooting.html" target="_blank" rel="noopener">Troubleshooting</a>
+      <a href="https://docs.espressif.com/projects/esptool/en/latest/contributing.html" target="_blank" rel="noopener">Contributing</a>
+      <a href="https://github.com/espressif/esptool/releases" target="_blank" rel="noopener">Releases</a>
+    </div>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const $ = (s, el = document) => el.querySelector(s);
+  const hex = (n, w = 8) => "0x" + n.toString(16).padStart(w, "0");
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+  /* ---------- data (from esptool/targets/*.py) ---------- */
+  const CHIPS = [
+    { id: "esp8266", name: "ESP8266", arch: "Xtensa", cpu: "L106 · 1 core", clock: "160 MHz", boot: 0x0,
+      radios: ["Wi-Fi"], tag: "The one that started it all. Still in a billion light switches.",
+      sample: "ESP8266EX", feat: "WiFi" },
+    { id: "esp32", name: "ESP32", arch: "Xtensa", cpu: "LX6 · 2 cores", clock: "240 MHz", boot: 0x1000,
+      radios: ["Wi-Fi", "BT Classic", "BLE"], tag: "The dual-core workhorse with Bluetooth Classic and BLE.",
+      sample: "ESP32-D0WD-V3 (revision v3.0)", feat: "WiFi, BT, Dual Core, 240MHz" },
+    { id: "esp32s2", name: "ESP32-S2", arch: "Xtensa", cpu: "LX7 · 1 core", clock: "240 MHz", boot: 0x1000,
+      radios: ["Wi-Fi"], tag: "Single core with native USB OTG and a focus on security.",
+      sample: "ESP32-S2FNR2 (revision v0.0)", feat: "WiFi, Embedded Flash 4MB, Embedded PSRAM 2MB" },
+    { id: "esp32s3", name: "ESP32-S3", arch: "Xtensa", cpu: "LX7 · 2 cores", clock: "240 MHz", boot: 0x0,
+      radios: ["Wi-Fi", "BLE"], tag: "Dual core with vector instructions for AI and camera work.",
+      sample: "ESP32-S3 (QFN56) (revision v0.2)", feat: "WiFi, BLE, Embedded PSRAM 8MB" },
+    { id: "esp32c2", name: "ESP32-C2", arch: "RISC-V", cpu: "RV32IMC · 1 core", clock: "120 MHz", boot: 0x0,
+      radios: ["Wi-Fi", "BLE"], tag: "Tiny, low-cost RISC-V for simple connected devices.",
+      sample: "ESP32-C2 (revision v1.0)", feat: "WiFi, BLE" },
+    { id: "esp32c3", name: "ESP32-C3", arch: "RISC-V", cpu: "RV32IMC · 1 core", clock: "160 MHz", boot: 0x0,
+      radios: ["Wi-Fi", "BLE"], tag: "The first RISC-V ESP32. Built-in USB serial/JTAG.",
+      sample: "ESP32-C3 (QFN32) (revision v0.4)", feat: "WiFi, BLE" },
+    { id: "esp32c6", name: "ESP32-C6", arch: "RISC-V", cpu: "RV32IMAC · HP + LP", clock: "160 MHz", boot: 0x0,
+      radios: ["Wi-Fi 6", "BLE", "802.15.4"], tag: "Wi-Fi 6 plus Thread and Zigbee radios. Matter-ready.",
+      sample: "ESP32-C6 (QFN40) (revision v0.0)", feat: "WiFi 6, BT 5, IEEE802.15.4" },
+    { id: "esp32h2", name: "ESP32-H2", arch: "RISC-V", cpu: "RV32IMAC · 1 core", clock: "96 MHz", boot: 0x0,
+      radios: ["BLE", "802.15.4"], tag: "No Wi-Fi by design. Low-power Thread, Zigbee and BLE.",
+      sample: "ESP32-H2 (revision v0.1)", feat: "BLE, IEEE802.15.4" },
+    { id: "esp32p4", name: "ESP32-P4", arch: "RISC-V", cpu: "RV32 · 2 cores", clock: "400 MHz", boot: 0x2000,
+      radios: [], tag: "High-performance HMI chip. No radio, lots of muscle.",
+      sample: "ESP32-P4 (revision v0.0)", feat: "High-Performance MCU" },
+  ];
+  const ALL_RADIOS = ["Wi-Fi", "BT", "BLE", "802.15.4"];
+  const state = { chip: CHIPS[1], task: "flash" };
+
+  /* ---------- theme ---------- */
+  const root = document.documentElement;
+  try { const t = localStorage.getItem("esptool-theme"); if (t) root.dataset.theme = t; } catch (e) {}
+  $("#themeBtn").addEventListener("click", () => {
+    const cur = root.dataset.theme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    root.dataset.theme = cur === "light" ? "dark" : "light";
+    try { localStorage.setItem("esptool-theme", root.dataset.theme); } catch (e) {}
+  });
+
+  /* ---------- toast + copy ---------- */
+  const toast = $("#toast"); let tt;
+  const say = (msg) => { toast.textContent = msg; toast.classList.add("show"); clearTimeout(tt); tt = setTimeout(() => toast.classList.remove("show"), 1800); };
+  const copy = async (text) => {
+    try { await navigator.clipboard.writeText(text); say("Copied to clipboard"); }
+    catch (e) {
+      const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); say("Copied to clipboard"); } catch (_) { say("Select the text to copy it"); }
+      ta.remove();
+    }
+  };
+  document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => copy(b.dataset.copy)));
+
+  /* ---------- PCB trace canvas ---------- */
+  const cv = $("#board"), ctx = cv.getContext("2d");
+  let traces = [], pulses = [], W = 0, H = 0, dpr = 1, raf;
+  const css = (v) => getComputedStyle(root).getPropertyValue(v).trim();
+  function buildBoard() {
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const g = 28, cols = Math.ceil(W / g), rows = Math.ceil(H / g);
+    traces = [];
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const n = Math.round((W * H) / 16000);
+    for (let i = 0; i < n; i++) {
+      let x = Math.floor(rnd() * cols), y = Math.floor(rnd() * rows);
+      const pts = [[x * g, y * g]];
+      let dir = Math.floor(rnd() * 4);
+      const steps = 3 + Math.floor(rnd() * 5);
+      for (let s = 0; s < steps; s++) {
+        const len = 1 + Math.floor(rnd() * 5);
+        const d = [[1, 0], [0, 1], [-1, 0], [0, -1]][dir];
+        const diag = rnd() < .45;
+        if (diag) { x += d[0] + (d[1] ? 1 : 0); y += d[1] + (d[0] ? 1 : 0); pts.push([x * g, y * g]); }
+        x += d[0] * len; y += d[1] * len; pts.push([x * g, y * g]);
+        dir = (dir + (rnd() < .5 ? 1 : 3)) % 4;
+      }
+      let L = 0; const segs = [];
+      for (let k = 1; k < pts.length; k++) { const l = Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]); segs.push(l); L += l; }
+      traces.push({ pts, segs, L });
+    }
+    pulses = traces.filter((_, i) => i % 3 === 0).map((t) => ({ t, p: rnd(), v: .0015 + rnd() * .003 }));
+  }
+  function pointAt(tr, f) {
+    let d = f * tr.L;
+    for (let k = 0; k < tr.segs.length; k++) {
+      if (d <= tr.segs[k]) { const a = tr.pts[k], b = tr.pts[k + 1], r = d / tr.segs[k]; return [a[0] + (b[0] - a[0]) * r, a[1] + (b[1] - a[1]) * r]; }
+      d -= tr.segs[k];
+    }
+    return tr.pts[tr.pts.length - 1];
+  }
+  function draw() {
+    const trace = css("--trace"), copper = css("--copper"), mask = css("--mask");
+    ctx.clearRect(0, 0, W, H);
+    ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = trace;
+    for (const tr of traces) {
+      ctx.beginPath(); ctx.moveTo(tr.pts[0][0], tr.pts[0][1]);
+      for (let k = 1; k < tr.pts.length; k++) ctx.lineTo(tr.pts[k][0], tr.pts[k][1]);
+      ctx.stroke();
+      for (const e of [tr.pts[0], tr.pts[tr.pts.length - 1]]) {
+        ctx.beginPath(); ctx.arc(e[0], e[1], 4, 0, 7); ctx.fillStyle = mask; ctx.fill(); ctx.stroke();
+      }
+    }
+    for (const pu of pulses) {
+      const [x, y] = pointAt(pu.t, pu.p);
+      const grd = ctx.createRadialGradient(x, y, 0, x, y, 16);
+      grd.addColorStop(0, copper); grd.addColorStop(1, "transparent");
+      ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(x, y, 16, 0, 7); ctx.fill();
+      ctx.fillStyle = copper; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 7); ctx.fill();
+    }
+  }
+  function loop() {
+    for (const pu of pulses) { pu.p += pu.v; if (pu.p > 1) pu.p = 0; }
+    draw(); raf = requestAnimationFrame(loop);
+  }
+  buildBoard(); draw();
+  if (!reduce) {
+    const io = new IntersectionObserver(([e]) => { cancelAnimationFrame(raf); if (e.isIntersecting) loop(); });
+    io.observe(cv);
+  }
+  let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { buildBoard(); draw(); }, 150); });
+  new MutationObserver(draw).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+
+  /* ---------- hero terminal typewriter ---------- */
+  const heroTerm = $("#heroTerm");
+  if (!reduce) {
+    const lines = heroTerm.innerHTML.split("\n");
+    heroTerm.innerHTML = "";
+    let i = 0;
+    const cmdLine = lines[0];
+    const plain = cmdLine.replace(/<[^>]+>/g, "").slice(2);
+    let c = 0;
+    const typeCmd = () => {
+      c++;
+      heroTerm.innerHTML = '<span class="c-p">$</span> <span class="c-cmd">' + esc(plain.slice(0, c)) + '</span><span class="caret"></span>';
+      if (c < plain.length) setTimeout(typeCmd, 22 + Math.random() * 40);
+      else { i = 1; setTimeout(nextLine, 350); }
+    };
+    const nextLine = () => {
+      if (i >= lines.length) {
+        heroTerm.innerHTML = lines.join("\n") + '\n<span class="c-p">$</span> <span class="caret"></span>';
+        setTimeout(() => { c = 0; typeCmd(); }, 6000);
+        return;
+      }
+      heroTerm.innerHTML = lines.slice(0, i + 1).join("\n") + '\n<span class="caret"></span>';
+      const l = lines[i]; i++;
+      setTimeout(nextLine, /Connecting|Writing|Stub running|Hash/.test(l) ? 520 : 110);
+    };
+    setTimeout(typeCmd, 700);
+  }
+
+  /* ---------- count-up stats ---------- */
+  if (!reduce) {
+    const io = new IntersectionObserver((ents) => ents.forEach((e) => {
+      if (!e.isIntersecting) return;
+      const el = e.target, to = +el.dataset.count; io.unobserve(el);
+      const t0 = performance.now();
+      const tick = (t) => { const k = Math.min(1, (t - t0) / 1100); el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }), { threshold: .6 });
+    document.querySelectorAll("[data-count]").forEach((el) => io.observe(el));
+  }
+
+  /* ---------- marquee ---------- */
+  const mq = ["Connecting....", "Chip is <b>ESP32-S3</b>", "Uploading stub...", "Changing baud rate to <b>921600</b>",
+    "Writing at <b>0x00010000</b>... (37 %)", "Hash of data verified.", "MAC: <b>7c:df:a1:e2:04:58</b>",
+    "Detected flash size: <b>4MB</b>", "Erasing flash (this may take a while)...", "Hard resetting via RTS pin..."];
+  $("#marquee").innerHTML = [...mq, ...mq].map((s) => "<span>" + s + "</span>").join("");
+
+  /* ---------- chip explorer ---------- */
+  const grid = $("#chipGrid"), detail = $("#detail");
+  grid.innerHTML = CHIPS.map((c) => `
+    <button class="chip-card" type="button" data-id="${c.id}" aria-pressed="false">
+      <span class="arch ${c.arch === "RISC-V" ? "risc" : ""}">${c.arch}</span>
+      <span class="pkg" aria-hidden="true"><i></i></span>
+      <span><strong>${c.name}</strong><small>--chip ${c.id}</small></span>
+    </button>`).join("");
+  grid.addEventListener("pointermove", (e) => {
+    const card = e.target.closest(".chip-card"); if (!card) return;
+    const r = card.getBoundingClientRect();
+    card.style.setProperty("--mx", e.clientX - r.left + "px"); card.style.setProperty("--my", e.clientY - r.top + "px");
+  });
+  grid.addEventListener("click", (e) => { const card = e.target.closest(".chip-card"); if (card) setChip(card.dataset.id); });
+
+  function renderDetail() {
+    const c = state.chip;
+    const has = (r) => c.radios.some((x) => x.startsWith(r === "BT" ? "BT Classic" : r));
+    detail.innerHTML = `
+      <div class="swap" style="display:grid;gap:20px">
+        <div style="display:grid;gap:10px">
+          <span class="eyebrow">${c.arch} · selected</span>
+          <h3>${c.name}</h3>
+          <p class="tagline">${c.tag}</p>
+        </div>
+        <dl class="specs">
+          <div><dt>CPU</dt><dd>${c.cpu}</dd></div>
+          <div><dt>Clock</dt><dd>${c.clock}</dd></div>
+          <div><dt>Bootloader offset</dt><dd>${"0x" + c.boot.toString(16)}</dd></div>
+          <div><dt>Radios</dt><dd>${c.radios.length || "None"}</dd></div>
+        </dl>
+        <div class="radios">${ALL_RADIOS.map((r) => `<span class="radio ${has(r) ? "on" : ""}">${r === "Wi-Fi" && c.radios.includes("Wi-Fi 6") ? "Wi-Fi 6" : r}</span>`).join("")}</div>
+        <div class="flag">esptool.py <em>--chip ${c.id}</em> chip_id</div>
+        <a class="btn ghost" href="#deck" style="justify-self:start">Use ${c.name} in the deck →</a>
+      </div>`;
+  }
+
+  /* ---------- command deck ---------- */
+  const TASKS = {
+    flash: { label: "Flash firmware", note: "Writes the bootloader, partition table and app to their standard offsets, then verifies each one by hash.", port: true },
+    mac: { label: "Read MAC", note: "Reads the factory MAC address burned into the chip's eFuses. Quick sanity check that your board is alive.", port: true },
+    erase: { label: "Erase flash", note: "Wipes the whole SPI flash chip back to 0xFF. Handy before a clean install, or when NVS gets weird.", port: true },
+    backup: { label: "Back up flash", note: "Dumps the entire flash to a file, from address 0 to the end. Do this before you experiment.", port: true },
+    merge: { label: "Merge binaries", note: "Combines every image into one file you can flash at 0x0. No board needed; great for releases.", port: false },
+    info: { label: "Inspect image", note: "Prints the header, segments and checksum of a firmware image. Runs offline.", port: false },
+  };
+  const tasksEl = $("#tasks");
+  tasksEl.innerHTML = Object.entries(TASKS).map(([k, t]) => `<button class="task" type="button" data-task="${k}" aria-pressed="${k === state.task}">${t.label}</button>`).join("");
+  tasksEl.addEventListener("click", (e) => { const b = e.target.closest(".task"); if (!b) return; state.task = b.dataset.task; tasksEl.querySelectorAll(".task").forEach((x) => x.setAttribute("aria-pressed", x === b)); renderCmd(); });
+  const selChip = $("#selChip"), selPort = $("#selPort"), selBaud = $("#selBaud");
+  selChip.innerHTML = CHIPS.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+  selChip.addEventListener("change", () => setChip(selChip.value));
+  selPort.addEventListener("change", renderCmd); selBaud.addEventListener("change", renderCmd);
+
+  function images() {
+    const b = state.chip.boot;
+    return [["0x" + b.toString(16), "bootloader.bin"], ["0x8000", "partition-table.bin"], ["0x10000", "app.bin"]];
+  }
+  function cmdParts() {
+    const c = state.chip, t = state.task, p = [["k", "esptool.py"], ["o", "--chip"], ["", c.id]];
+    if (TASKS[t].port) p.push(["o", "-p"], ["", selPort.value], ["o", "-b"], ["", selBaud.value]);
+    const imgs = () => images().forEach(([a, f]) => p.push(["a", a], ["", f]));
+    if (t === "flash") { p.push(["k", "write_flash"]); imgs(); }
+    if (t === "mac") p.push(["k", "read_mac"]);
+    if (t === "erase") p.push(["k", "erase_flash"]);
+    if (t === "backup") p.push(["k", "read_flash"], ["a", "0"], ["a", "ALL"], ["", "backup.bin"]);
+    if (t === "merge") { p.push(["k", "merge_bin"], ["o", "-o"], ["", "merged.bin"]); imgs(); }
+    if (t === "info") { p.splice(1, 2); p.push(["k", "image_info"], ["o", "--version"], ["", "2"], ["", "app.bin"]); }
+    return p;
+  }
+  const cmdText = () => cmdParts().map((x) => x[1]).join(" ");
+  function renderCmd() {
+    $("#cmdOut").innerHTML = '<span class="c-p" style="color:#e8945c">$ </span>' + cmdParts().map(([k, v]) => k ? `<span class="${k}">${esc(v)}</span>` : esc(v)).join(" ");
+    $("#taskNote").textContent = TASKS[state.task].note;
+    renderStages(-1);
+  }
+  ["#copyCmd", "#copyCmd2"].forEach((s) => $(s).addEventListener("click", () => copy(cmdText())));
+
+  const STAGES = { flash: ["Sync", "Stub", "Baud", "Write", "Verify", "Reset"], mac: ["Sync", "Stub", "Read", "Reset"],
+    erase: ["Sync", "Stub", "Baud", "Erase", "Reset"], backup: ["Sync", "Stub", "Baud", "Read", "Reset"],
+    merge: ["Parse", "Pad", "Write"], info: ["Parse", "Segments", "Checksum"] };
+  function renderStages(active) {
+    const st = STAGES[state.task];
+    $("#stages").innerHTML = st.map((s, i) => `<span class="stage ${i < active ? "done" : i === active ? "active" : ""}">${s}</span>`).join("");
+  }
+  function script() {
+    const c = state.chip, port = selPort.value, baud = selBaud.value, mac = "7c:df:a1:" + c.id.length.toString(16).padStart(2, "0") + ":3e:9a";
+    const A = (s) => `<span class="c-addr">${s}</span>`, OK = (s) => `<span class="c-ok">${s}</span>`, D = (s) => `<span class="c-dim">${s}</span>`;
+    const head = [[0, "esptool.py v4.7-dev"], [0, "Serial port " + port], [0, "Connecting...."], [0, `Chip is <span class="c-info">${c.sample}</span>`],
+      [0, "Features: " + c.feat], [0, "Crystal is 40MHz"], [0, "MAC: " + A(mac)], [1, "Uploading stub..."], [1, "Running stub..."], [1, "Stub running..."]];
+    const baudL = baud === "115200" ? [] : [[2, "Changing baud rate to " + A(baud)], [2, "Changed."]];
+    const rate = Math.round(+baud / 1000 * 0.78 * 10) / 10;
+    const t = state.task;
+    if (t === "mac") return [...head, [2, "MAC: " + A(mac)], [3, D("Hard resetting via RTS pin...")]];
+    if (t === "erase") return [...head, ...baudL, [3, "Erasing flash (this may take a while)..."], [3, OK("Chip erase completed successfully in 9.8s")], [4, D("Hard resetting via RTS pin...")]];
+    if (t === "backup") {
+      const out = [...head, ...baudL, [3, "Configuring flash size..."], [3, "Detected flash size: 4MB"]];
+      [0, 25, 50, 75, 100].forEach((p) => out.push([3, `${A(String(4194304 * p / 100))} (${p} %)`]));
+      out.push([3, `Read 4194304 bytes at ${A("0x00000000")} in ${(33554 / rate).toFixed(1)} seconds (${rate} kbit/s)...`], [4, D("Hard resetting via RTS pin...")]);
+      return out;
+    }
+    if (t === "flash") {
+      const out = [...head, ...baudL, [3, "Configuring flash size..."]];
+      const sizes = { "bootloader.bin": 26640, "partition-table.bin": 3072, "app.bin": 183472 };
+      images().forEach(([a, f]) => {
+        const addr = parseInt(a, 16), sz = sizes[f], comp = Math.round(sz * (f === "partition-table.bin" ? .04 : .6));
+        out.push([3, `Flash will be erased from ${A(hex(addr))} to ${A(hex(addr + Math.ceil(sz / 4096) * 4096 - 1))}...`]);
+        out.push([3, `Compressed ${sz} bytes to ${comp}...`]);
+        const pcts = sz > 50000 ? [0, 33, 66, 100] : [100];
+        pcts.forEach((p) => out.push([3, `Writing at ${A(hex(addr + Math.floor(sz * p / 100 / 4096) * 4096))}... (${p} %)`]));
+        out.push([3, `Wrote ${sz} bytes (${comp} compressed) at ${hex(addr)} in ${(comp * 8 / 1000 / rate + .1).toFixed(1)} seconds`]);
+        out.push([4, OK("Hash of data verified.")]);
+      });
+      out.push([5, "Leaving..."], [5, D("Hard resetting via RTS pin...")]);
+      return out;
+    }
+    if (t === "merge") return [[0, "esptool.py v4.7-dev"], ...images().map(([a, f]) => [1, `Wrote ${A(a)} ${f}`]),
+      [2, `Wrote ${A("0x" + (0x10000 + 183472).toString(16))} bytes to file merged.bin, ready to flash to offset ${A("0x0")}`]];
+    if (t === "info") return [[0, "esptool.py v4.7-dev"], [0, "File size: 183472 (bytes)"], [0, "Detected image type: " + c.name],
+      [1, D("ESP32 image header")], [1, `Entry point: ${A("0x40081b14")}`], [1, "Segments: 6"], [1, "Flash mode: DIO · Flash freq: 40m · Flash size: 4MB"],
+      [2, OK("Checksum: 5b (valid)")], [2, OK("Validation hash: 4f2c...e81a (valid)")]];
+  }
+  let running = false;
+  $("#runBtn").addEventListener("click", () => {
+    if (running) return; running = true;
+    const out = $("#consoleOut"), lines = script();
+    out.innerHTML = `<span class="c-p">$</span> <span class="c-cmd">${esc(cmdText())}</span>\n`;
+    let i = 0;
+    const step = () => {
+      if (i >= lines.length) { renderStages(STAGES[state.task].length); out.innerHTML += '<span class="c-p">$</span> <span class="caret"></span>'; running = false; return; }
+      const [stg, txt] = lines[i++];
+      renderStages(stg); out.innerHTML += txt + "\n"; out.scrollTop = out.scrollHeight;
+      setTimeout(step, reduce ? 0 : /Connecting|Erasing|Writing|Stub running/.test(txt) ? 420 : 90);
+    };
+    step();
+  });
+
+  /* ---------- flash map ---------- */
+  const FLASH = 0x400000;
+  function regions() {
+    const b = state.chip.boot, r = [];
+    if (b > 0) r.push({ name: "Reserved", cls: "reserved", s: 0, e: b, desc: state.chip.id === "esp32p4" ? "The first two sectors are kept free on ESP32-P4." : "Left untouched on this chip. The ROM looks for the second-stage bootloader at 0x1000." });
+    r.push({ name: "Bootloader", s: b, e: 0x8000, desc: "Second-stage bootloader. The ROM loads it, and it loads your app.", w: 2.2 });
+    r.push({ name: "Partition table", s: 0x8000, e: 0x9000, desc: "Maps names to regions: where NVS, PHY data and the app live.", w: 1.6 });
+    r.push({ name: "nvs", s: 0x9000, e: 0xf000, desc: "Non-volatile key/value storage. Wi-Fi credentials usually end up here.", w: 1.3 });
+    r.push({ name: "phy_init", s: 0xf000, e: 0x10000, desc: "RF calibration data for the radio.", w: 1.1 });
+    r.push({ name: "factory app", s: 0x10000, e: 0x110000, desc: "Your firmware. 1 MB in the default single-app layout.", w: 4 });
+    r.push({ name: "Unallocated", cls: "free", s: 0x110000, e: FLASH, desc: "Room for OTA slots, SPIFFS, FAT or LittleFS when you need it.", w: 3.2 });
+    if (b > 0) r[0].w = b === 0x2000 ? .8 : .6;
+    return r;
+  }
+  const mapEl = $("#flashMap"), segInfo = $("#segInfo");
+  let selSeg = 1;
+  const fmtSize = (n) => n >= 0x100000 ? (n / 0x100000).toFixed(n % 0x100000 ? 2 : 0) + " MB" : n >= 1024 ? n / 1024 + " KB" : n + " B";
+  function renderMap() {
+    const R = regions();
+    if (selSeg >= R.length) selSeg = 0;
+    mapEl.innerHTML = R.map((g, i) => `<button class="seg ${g.cls || ""} ${i === selSeg ? "sel" : ""}" type="button" data-i="${i}" style="flex:${g.w} 1 0" aria-label="${g.name}, ${hex(g.s, 5)} to ${hex(g.e - 1, 5)}"><span>${g.name}</span><small>${hex(g.s, 5)}</small></button>`).join("");
+    const g = R[selSeg];
+    segInfo.innerHTML = `
+      <div class="seg-info"><dt>Region</dt><dd>${g.name}</dd></div>
+      <div class="seg-info"><dt>Start</dt><dd>${hex(g.s)}</dd></div>
+      <div class="seg-info"><dt>End</dt><dd>${hex(g.e - 1)}</dd></div>
+      <div class="seg-info"><dt>Size</dt><dd>${fmtSize(g.e - g.s)}</dd></div>
+      <p class="seg-desc">${g.desc}</p>`;
+    $("#mapChip").textContent = state.chip.name;
+    $("#mapBoot").textContent = "0x" + state.chip.boot.toString(16);
+  }
+  mapEl.addEventListener("click", (e) => { const s = e.target.closest(".seg"); if (!s) return; selSeg = +s.dataset.i; renderMap(); });
+  let flashing = false;
+  $("#flashBtn").addEventListener("click", () => {
+    if (flashing) return; flashing = true;
+    const R = regions(), segs = [...mapEl.children];
+    const targets = R.map((g, i) => ({ g, el: segs[i] })).filter((x) => !x.g.cls);
+    segs.forEach((s) => s.style.setProperty("--fill", 0));
+    const readout = $("#mapReadout"), orig = readout.innerHTML;
+    let ti = 0, p = 0;
+    const tick = () => {
+      if (ti >= targets.length) {
+        readout.innerHTML = `<span style="color:var(--ok)">Hash of data verified.</span> Wrote ${targets.length} regions to ${state.chip.name}`;
+        setTimeout(() => { readout.innerHTML = orig; renderMap(); flashing = false; }, 2600);
+        return;
+      }
+      const { g, el } = targets[ti];
+      p = Math.min(100, p + (reduce ? 100 : 4 + Math.random() * 6));
+      el.style.setProperty("--fill", p / 100);
+      const addr = g.s + Math.floor((g.e - g.s) * p / 100 / 0x1000) * 0x1000;
+      readout.innerHTML = `Writing at <b>${hex(Math.min(addr, g.e - 0x1000))}</b>... (${Math.round(p)} %) · ${g.name}`;
+      if (p >= 100) { ti++; p = 0; }
+      setTimeout(tick, reduce ? 0 : 40);
+    };
+    tick();
+  });
+
+  /* ---------- install tabs ---------- */
+  const INSTALL = {
+    pip: [["$", "pip install esptool"], ["", "Successfully installed esptool-4.7"], ["$", "esptool.py version"], ["", "esptool.py v4.7"]],
+    pipx: [["$", "pipx install esptool"], ["", "installed package esptool 4.7"], ["", "  These apps are now globally available"], ["", "    - esptool.py  - espefuse.py  - espsecure.py"]],
+    src: [["$", "git clone https://github.com/espressif/esptool.git"], ["$", "cd esptool"], ["$", "pip install --user -e ."], ["", "Successfully installed esptool"]],
+  };
+  let curTab = "pip";
+  function renderInstall() {
+    $("#installOut").innerHTML = INSTALL[curTab].map(([p, l]) => p ? `<span class="c-p">$</span> <span class="c-cmd">${esc(l)}</span>` : `<span class="c-dim">${esc(l)}</span>`).join("\n");
+  }
+  document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
+    curTab = t.dataset.tab;
+    document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", x === t));
+    renderInstall();
+  }));
+  $("#copyInstall").addEventListener("click", () => copy(INSTALL[curTab].filter((x) => x[0]).map((x) => x[1]).join("\n")));
+
+  /* ---------- magnetic buttons ---------- */
+  if (!reduce && matchMedia("(pointer: fine)").matches) {
+    document.querySelectorAll(".btn").forEach((b) => {
+      b.addEventListener("pointermove", (e) => { const r = b.getBoundingClientRect(); b.style.transform = `translate(${(e.clientX - r.left - r.width / 2) * .15}px, ${(e.clientY - r.top - r.height / 2) * .25}px)`; });
+      b.addEventListener("pointerleave", () => { b.style.transform = ""; });
+    });
+  }
+
+  /* ---------- wiring ---------- */
+  function setChip(id) {
+    state.chip = CHIPS.find((c) => c.id === id) || CHIPS[1];
+    grid.querySelectorAll(".chip-card").forEach((c) => c.setAttribute("aria-pressed", c.dataset.id === state.chip.id));
+    selChip.value = state.chip.id;
+    renderDetail(); renderCmd(); renderMap();
+  }
+  setChip("esp32"); renderInstall();
+})();
+</script>
+</body>
+</html>
